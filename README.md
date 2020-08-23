@@ -1,4 +1,7 @@
-# logminer_replication
+1. [Concept](#logminer_replication)
+2. [How does it work; Settings, what is what, example](#)
+
+## logminer_replication
 prof-concept for one oracle table replication by logminer
 
 It seems tome that it is possible: to replicate oracle table (or, even, tables)  with help of oracle-logminer;
@@ -92,4 +95,57 @@ By my intent and code-time design it firest by incron-daemon, at dest-db server,
 So first and one argument of `logminer-trigger` - is full name of the next arclog-file, `$@/$#` in incrond-terms;
 `logminer-trigger` uses and sources two files: `logminer.conf` and `logminer_lib.sh`
 
+## Settings, what is what, example
+There're two part of this prof-concept;
+One is: part which process arriving archlogs, that is: mines info about transactions from it; 
+In essential it's a bunch of shell scripts + a few tables, all at(and in) dest database-side;
+Archlogs, in my case, are delivered to the dest-db side by incrond+rsync solution, which works at source-db side;
+I don't provide here this part of infrastructure of archlog-processing;
+At dest-db side: mining of next archivelog-file is built again on incrod-service: it starts certain bash-script - `logminer-trigger` when new archlog arrives;
 
+Second part is: part which helps to buld human-readable and ready to execute text of dml-statements, of transactions which were mined by fisrt part;
+It's a plsql-package + a few of tables, all in the dest database;
+Namely this is the following components:
+1. plsql-package: `SYSTEM.rewrite_sql`; It's source code i provided by: `pkg_spec.sql`, `pkg_body.sql`;
+2. two-tables, which should be created in dest-db; `pkg_note.txt`
+
+So, components of the fist part are:
+1. `logminer-trigger`: it does mining of each new archivelog file, which arrive to the dest-db side; 
+It launched by incrond-daemon, as handler, of file-event of folder to which archivelog arrive from source-db side;
+And when launching `logminer-trigger` prvided by incrond with full-path name of archivelog file;
+So there (at dest-db side) incrod-service should have settings for launchibg `logminer-trigger`, something like:
+```/db/archive/ IN_MOVED_TO,IN_NO_LOOP /opt/sbing/logminer-trigger $@/$#```
+2. `logminer.conf`: it contains settings which governs work of `logminer-trigger`
+The main parameter here: `TABLE_NAME`; It sould be setted to value which associated with oracle-table, which you are interested in;
+Taht is: it's the same table, which you want to replicate from source-db to dest-db, replicated-table for short;
+Notation of the value should match to form of values in `V$LOGMNR_CONTENTS.table_name` filed;
+That is it something like `OBJ# [0-9]+` (in regexp-style, just for describing here);
+Digit-part of the value: it's object_id of replicated-table - it should be obtained from catalog of source-db;
+3. `logminer_lib.sh`: I moved out all subrouties from `logminer-trigger` to separate file; It seems to me that it's a more suitable way to debug|develop shell scripts;
+So `logminer-trigger` sources logminer_lib.sh` 
+4. `logminer_tabs.txt`: a few oracle-tables which need for mining tx-info and maintain list of archlogs for that mining;
+
+So, the order of settign and lauching this part of infrastructure to work is (all at dest-db side):
+1. Setting up directory for archlogs receiving, setting up incrond for this directory; Incrond should execute `logminer-trigger` when new archivelog will arrive;
+2. Create oracle-tables in dest-db, `logminer_tabs.txt`; In my case: I used system-schema, just for save mu time and just because of dev-mode of my work;
+3. Place `logminer-trigger`, `logminer_lib.sh` at dest-db server;
+4. Place here at edit `logminer.conf`
+
+So as soon as it done the mining, in essentioal, can be started;
+That is: arclogs - arrives from source-db, to dest-db;
+Incrond-service, at dest-db side: will file on `logminer-trigger`, each time when next archivelog comes here;
+`logminer-trigger` reads `logminer.conf` and sources `logminer_lib.sh` and mines from archivelog tx about table, which number you set in `logminer.conf`
+It mines info about all transactions, which work with replicated table at source-db side;
+It traks long and not closed yet tx (see concepts in above);
+And it obtains sequences of commited tx, converts it to human-readable, ready-to-apply form (with helps of `SYSTEM.rewrite_sql` package) nd applyes it to replica of replicated-table in the dest-db;
+
+So, I guess there should be couple of words how to setup and launch replication of table;
+1. Suppose all infrastructure, at dest-db is set: incrond-service, shell-scripts, plsql-package, aux-tables and etc;
+2. At the moment of time T1, at source-db, we lock table, which we want to replicate to dest-db;
+Lock, here I mean some action in the sense of prohibiting execution of transactions on the table, at source-db;
+For example: `lock table ... in exclusive mode` or something like it;
+3. We create copy of the table at dest-db; That is: instantiate table there;
+4. We issue `alter system archive log current;` at source-db and note number of current sequence of redo-log, at source-db;
+5. We set the number of current sequence in `system.logmnr_conf` table, as value of `last_processed_seq` parameter;
+And we set catalog-number of replicated table in parameter `TABLE_NAME` in `logminer.conf`
+6. release lock on replicated-table at sourcd-db;
