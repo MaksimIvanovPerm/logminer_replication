@@ -1,5 +1,5 @@
 1. [Concept](#logminer_replication)
-2. [How does it work; Settings, what is what, example](#Settings,-what-is-what,-example)
+2. [How to get it everything to work](#How-to-get-it-everything-to-work)
 
 ## logminer_replication
 prof-concept for one oracle table replication by logminer
@@ -95,7 +95,7 @@ By my intent and code-time design it firest by incron-daemon, at dest-db server,
 So first and one argument of `logminer-trigger` - is full name of the next arclog-file, `$@/$#` in incrond-terms;
 `logminer-trigger` uses and sources two files: `logminer.conf` and `logminer_lib.sh`
 
-## Settings, what is what, example
+## How to get it everything to work
 There're two part of this prof-concept;
 One is: part which process arriving archlogs, that is: mines info about transactions from it; 
 In essential it's a bunch of shell scripts + a few tables, all at(and in) dest database-side;
