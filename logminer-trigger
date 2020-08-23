@@ -1,0 +1,147 @@
+#!/bin/bash
+CONF_FILE="/var/log/rias/dba/logminer.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+LOG_FILE="${LOG_FILE:-/var/log/rias/dba/logminer.log}"
+CURRENT_LOG_FILE="${LOG_FILE}.$$"; touch "$CURRENT_LOG_FILE"
+LOCK_FILE="${LOCK_FILE:-/var/log/rias/dba/logminer.lck}"
+TMP_FILE="/tmp/logmnr_$$.txt"
+SQL_SPOOL_FILE="/tmp/logmnr_spool_$$.txt"
+RUNID=$(date +%s)
+
+ARCLOG_NAME="$1"
+PROGRAM=$(basename "$0")
+
+# Subroutines ############################
+LIBRARY="/opt/rias/sbin/logminer_lib.sh"
+if [ -f "$LIBRARY" ]
+then
+	source "$LIBRARY"
+	if [ "$?" -ne "0" ]
+	then
+		echo "Library ${LIBRARY} found; But it sources with error"
+		exit 1
+	fi
+else
+ echo "Can not find library: ${LIBRARY}"
+ exit 1
+fi
+# Main ###################################
+trap myexit 1 2 3 15
+module="main"
+
+if [ -f "$LOCK_FILE" ]
+then
+	log_info "${module} LOCK_FILE exists, spid: `cat ${LOCK_FILE}`"
+	v_output=$( ps aux | grep $(cat ${LOCK_FILE}) | grep -v "grep" )
+	log_info "${module} ${v_output}"
+	echo "$v_output" | grep -q "$PROGRAM"
+	if [ "$?" -eq "0" ]
+	then
+		log_info "${module} and process with that spid exists and it is ${PROGRAM}"
+		log_info "${module} So, the program is already run"
+		exit 0
+	else
+		log_info "${module} but there is no process with that spid and/or it is not ${PROGRAM}"
+		log_info "${module} so, ${LOCK_FILE} will be erased and the ${PROGRAM} will be started"
+		${RM} -f "$LOCK_FILE"
+	fi
+fi
+
+if [ ! -f "$LOCK_FILE" ]
+then
+	log_info "${module} starting ${PROGRAM}"
+	echo "$$" > "$LOCK_FILE"
+	log_info "${module} Started with pid: `cat ${LOCK_FILE}`"
+	#log_info "${module} LOG_FILE: ${LOG_FILE}; LOCK_FILE: ${LOCK_FILE}"
+fi
+
+# essential activity
+if [ ! -f "${ARCLOG_NAME}" ]
+then
+	log_info "${module} file: ${ARCLOG_NAME} does not exists"
+	exit 1
+fi
+
+
+log_info "${module} well, let's try to process file ${ARCLOG_NAME}"
+v_arclogdir=$(get_arclog_attribute "$ARCLOG_NAME" "dirname")
+v_arclogname=$(get_arclog_attribute "$ARCLOG_NAME" "filename")
+v_arclog_seq=$(get_arclog_attribute "$ARCLOG_NAME" "seq#")
+v_arclog_rid=$(get_arclog_attribute "$ARCLOG_NAME" "rid")
+log_info "${module} arclogdir:...${v_arclogdir}"
+log_info "${module} arclogname:..${v_arclogname}"
+log_info "${module} arclog seq#:.${v_arclog_seq}"
+log_info "${module} arclog rid:..${v_arclog_rid}"
+
+
+get_logmnr_param "last_processed_seq"
+if [ "$?" -ne "0" ]
+then
+	log_info "${module} can not obtain last processed sequence"
+	myexit "1"
+fi
+
+v_last_applied_seq=$(cat $SQL_SPOOL_FILE | tr -d [:cntrl:] | tr -d [:space:])
+if [ -z "$v_last_applied_seq" ] 
+then
+	log_info "${module} v_last_applied_seq obtained as null from repository;"
+	v_last_applied_seq=$((v_arclog_seq-1))
+	log_info "${module} so it setted to: ${v_last_applied_seq}"
+else
+	log_info "${module} last processed sequence was: ${v_last_applied_seq}"
+fi 
+v_next_needed_seq=$((v_last_applied_seq+1))
+log_info "${module} so, next needed seq# is: ${v_next_needed_seq}"
+
+if [ "$v_next_needed_seq" -gt "$v_arclog_seq" ]
+then
+	log_info "${module} sequence ${v_arclog_seq} was already processed; Exiting;"
+	myexit "0"
+fi
+
+log_info "${module} register&check expired arclogs"
+#register_archivelog "$ARCLOG_NAME"
+#[ "$?" -ne "0" ] && {
+#	log_info "${module} register_archivelog failed;"; myexit "1"
+#}
+register_all_archivelog_in_dir "$v_arclogdir" "0" #In origin - "$v_next_needed_seq"
+[ "$?" -ne "0" ] && {
+	log_info "${module} register_all_archivelog_in_dir failed;"; myexit "1"
+}
+check_and_del_expired_arclog_registrations
+[ "$?" -ne "0" ] && {
+	log_info "${module} check_expired_arclog_registrations failed;"; myexit "1"
+}
+
+
+if [ "$v_next_needed_seq" -eq "$v_arclog_seq" ]
+then
+	log_info "${module} well ${ARCLOG_NAME} is arclog with seq# which exactly the next after ${v_last_applied_seq}"
+	process_given_arclog "$v_arclog_seq"
+	[ "$?" -ne "0" ] && {
+		log_info "${module} can not process ${ARCLOG_NAME}; exiting with failure;"; return 1
+	}
+else
+	log_info "${module} well ${ARCLOG_NAME} is arclog with seq# which is too far ahead than ${v_last_applied_seq}"
+	log_info "${module} See if arclog sequence, from ${v_next_needed_seq} to ${v_arclog_seq} contain gap, or not"
+	#check sequence from ${v_next_needed_seq} to ${v_arclog_seq} for gap
+	check_sequence_continuity "$v_next_needed_seq" "$v_arclog_seq"
+	if [ "$?" -ne "0" ]
+	then
+		log_info "${module} there is a gap, between ${v_next_needed_seq} & ${v_arclog_seq};"; myexit "1"
+	else
+		log_info "${module} ok, there is no gap, between ${v_next_needed_seq} & ${v_arclog_seq}"
+		log_info "${module} so, let's try to process all this arclogs, one-by-one, from ${v_next_needed_seq} to ${v_arclog_seq}"
+		for ((i=${v_next_needed_seq}; i<=${v_arclog_seq}; i++))
+		do
+			log_info "${module} try to process seq#: ${i}"
+			process_given_arclog "$i"
+			[ "$?" -ne "0" ] && {
+				log_info "${module} can not process ${ARCLOG_NAME}; exiting with failure;"; return 1
+			}
+		done
+	fi
+fi
+
+myexit "0"
+

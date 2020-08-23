@@ -1,0 +1,14 @@
+-- drop table SYSTEM.active_transactions;
+create table SYSTEM.active_transactions(opened_at_seq number,
+xid varchar2(18),
+sid number, 
+serial# number,
+status varchar2(10))
+;
+
+--drop table SYSTEM.arclogs 
+CREATE TABLE SYSTEM.arclogs(fs_directory varchar2(128),
+name varchar2(128),
+seq number,
+resetlogs_id number,
+status char(10));

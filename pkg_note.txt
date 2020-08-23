@@ -1,0 +1,63 @@
+# Conf-tables for pkg ######################################################################
+--drop table SYSTEM.logmnr_tabconf 
+CREATE TABLE SYSTEM.logmnr_tabconf(id NUMBER,
+no_dict_name VARCHAR2(30) NOT NULL, 
+orig_owner VARCHAR2(30) NOT NULL, 
+orig_name VARCHAR2(30) NOT NULL,
+map_owner VARCHAR2(30),
+map_name VARCHAR2(30)) TABLESPACE users;
+
+INSERT INTO SYSTEM.logmnr_tabconf(id, no_dict_name, orig_owner, orig_name, map_owner, map_name)
+VALUES (1, 'OBJ# 56770', 'DEMOSCHEMA', 'ADDENDUM_RESOURCES', NULL, null);
+COMMIT;
+
+SELECT * FROM SYSTEM.logmnr_tabconf t;  
+
+--drop table SYSTEM.logmnr_coldefconf 
+CREATE TABLE SYSTEM.logmnr_coldefconf(id NUMBER,
+parent_id NUMBER,
+no_dict_name VARCHAR2(30),
+name VARCHAR2(30),
+type VARCHAR2(30),
+data_length NUMBER,
+data_precision NUMBER,
+nullable CHAR(1)) TABLESPACE users;
+
+INSERT INTO SYSTEM.logmnr_coldefconf(id, parent_id, no_dict_name, name, type, data_length, data_precision, nullable)
+VALUES (1, 1, 'COL 1', 'AR_ID', 'NUMBER', 22, NULL, 'N');
+INSERT INTO SYSTEM.logmnr_coldefconf(id, parent_id, no_dict_name, name, type, data_length, data_precision, nullable)
+VALUES (2, 1, 'COL 2', 'ADDENDUM_ID', 'NUMBER', 22, NULL, 'N');
+INSERT INTO SYSTEM.logmnr_coldefconf(id, parent_id, no_dict_name, name, type, data_length, data_precision, nullable)
+VALUES (3, 1, 'COL 3', 'RESOURCE_ID', 'NUMBER', 22, NULL, 'N');
+INSERT INTO SYSTEM.logmnr_coldefconf(id, parent_id, no_dict_name, name, type, data_length, data_precision, nullable)
+VALUES (4, 1, 'COL 4', 'ACTIVE_FROM', 'DATE', 7, NULL, 'N');
+INSERT INTO SYSTEM.logmnr_coldefconf(id, parent_id, no_dict_name, name, type, data_length, data_precision, nullable)
+VALUES (5, 1, 'COL 5', 'ACTIVE_TO', 'DATE', 7, NULL, 'Y');
+COMMIT;
+SELECT * from SYSTEM.logmnr_coldefconf; 
+
+# Testing ##################################################################################
+set newp none
+set linesize 128
+set feedback off
+set serveroutput on size unlim
+
+define v_scn="17118960767882"
+
+declare
+ v_operation system.tranlog.OPERATION%type;
+ v_object    SYSTEM.tranlog.SEG_NAME%type;
+ v_statement SYSTEM.tranlog.SQL_REDO%type;
+ v_scn       number := &&v_scn;
+begin
+ select t.operation, t.seg_name, t.SQL_REDO into v_operation, v_object, v_statement
+ from SYSTEM.tranlog t WHERE  t.SCN=v_scn;
+ --v_statement := SYSTEM.rewrite_sql.process_insert_statement(v_object, v_statement, 1);
+ --v_statement := SYSTEM.rewrite_sql.process_update_statement(v_object, v_statement, 1);
+ --v_statement := SYSTEM.rewrite_sql.process_delete_statement(v_object, v_statement, 1);
+ v_statement:=SYSTEM.rewrite_sql.process_statement(v_operation, v_object, v_statement, 1);
+ dbms_output.put_line(v_statement);
+end;
+/
+
+
